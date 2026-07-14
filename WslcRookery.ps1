@@ -402,7 +402,7 @@ function Start-WslcRookeryUi {
     $script:window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 
     # Window icon (top-left title-bar + taskbar). Loaded from the app folder.
-    $iconPath = Join-Path $script:AppDir 'WslcRookery.ico'
+    $iconPath = Join-Path $script:AppDir 'docs\WslcRookery.ico'
     if (Test-Path -LiteralPath $iconPath) {
         try {
             $script:window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create([Uri]::new($iconPath))
@@ -464,7 +464,7 @@ function Start-WslcRookeryUi {
         $panel = New-Object System.Windows.Controls.StackPanel
         $panel.Margin = '20'; $panel.Width = 380
 
-        $logoPath = Join-Path $script:AppDir 'WSLC Rookery Logo.png'
+        $logoPath = Join-Path $script:AppDir 'docs\WSLC Rookery Logo.png'
         if (Test-Path -LiteralPath $logoPath) {
             try {
                 $img = New-Object System.Windows.Controls.Image

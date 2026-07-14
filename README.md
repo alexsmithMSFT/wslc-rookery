@@ -1,7 +1,7 @@
 # WSLC Rookery
 
 <p align="center">
-  <img src="WSLC Rookery Logo.png" alt="WSLC Rookery logo" width="200">
+  <img src="docs/WSLC Rookery Logo.png" alt="WSLC Rookery logo" width="200">
 </p>
 
 A desktop GUI tool for managing [WSL containers](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
@@ -90,8 +90,8 @@ bar shows object counts, last refresh time, and any `wslc` error.
 | `WslcRookery.ps1` | The whole app (data layer + WPF UI + STA bootstrap). |
 | `Start-WslcRookery.cmd` | Double-click launcher. |
 | `Start-WslcRookery.vbs` | Helper the launcher calls to start `pwsh` with no console window (`SW_HIDE`). |
-| `WslcRookery.ico` | Window / taskbar icon. |
-| `WSLC Rookery Logo.png` | Logo shown in the README and the About dialog. |
+| `docs/WslcRookery.ico` | Window / taskbar icon. |
+| `docs/WSLC Rookery Logo.png` | Logo shown in the README and the About dialog. |
 
 ## Limitations
 
