@@ -16,12 +16,27 @@
     purpose - WPF event handlers cannot see function-local variables when they
     fire later.
 
+.PARAMETER Demo
+    Fill the grids with synthetic placeholder data instead of querying wslc.exe.
+    Nothing real is touched - handy for screenshots and docs. Real wslc calls are
+    skipped entirely in this mode.
+
+.EXAMPLE
+    pwsh -File .\WslcRookery.ps1 -Demo
+
 .NOTES
     Local-only informal tool. Licensed under the MIT License.
 #>
+param([switch]$Demo)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Demo mode. The STA bootstrap re-hosts this script's raw text on a fresh runspace
+# (see bottom), where a bound -Demo param would reset to $false; so honor an
+# injected $DemoMode variable when present, exactly like $AppDir below.
+if (Test-Path variable:DemoMode) { $script:DemoMode = [bool]$DemoMode }
+else { $script:DemoMode = $Demo.IsPresent }
 
 # Resolve the app directory (holds the window icon). $PSScriptRoot is empty when
 # this script is re-hosted as raw text on the STA runspace further below, so the
@@ -135,6 +150,96 @@ function Get-WslcSnapshot {
         Volumes    = @($volumes)
     }
 }
+
+function Get-DemoSnapshot {
+    # Fully synthetic snapshot for screenshots/docs. Rows match the exact shape
+    # produced by Get-WslcSnapshot so the UI needs no changes. Running containers
+    # get lightly jittered metrics each call so the grid looks alive across
+    # auto-refreshes; stopped containers have blank metrics (as real ones do).
+    $rand = [Random]::new()
+    $jit = { param($base, $span) ('{0:0.00}%' -f [Math]::Max(0.0, $base + ($rand.NextDouble() - 0.5) * $span)) }
+    $now = Get-Date
+
+    $running = @(
+        @{ Name = 'web-frontend'; Image = 'nginx:1.27';         Cpu = 4.2;  Mem = 6.1;  MemUsage = '124.5 MiB / 2 GiB';  Net = '3.4 MB / 1.2 MB';   Block = '8.1 MB / 0 B';   PIDs = 9;  Ago = 3 },
+        @{ Name = 'api-gateway';  Image = 'traefik:v3';          Cpu = 7.8;  Mem = 9.4;  MemUsage = '188.2 MiB / 2 GiB';  Net = '12.7 MB / 9.1 MB';  Block = '2.3 MB / 512 kB'; PIDs = 14; Ago = 5 },
+        @{ Name = 'cache';        Image = 'redis:7';             Cpu = 1.5;  Mem = 3.2;  MemUsage = '64.8 MiB / 2 GiB';   Net = '820 kB / 640 kB';   Block = '0 B / 0 B';      PIDs = 5;  Ago = 6 },
+        @{ Name = 'db';           Image = 'postgres:16';         Cpu = 3.1;  Mem = 15.7; MemUsage = '321.0 MiB / 2 GiB';  Net = '5.6 MB / 4.2 MB';   Block = '44.9 MB / 12 MB';PIDs = 21; Ago = 8 },
+        @{ Name = 'worker';       Image = 'python:3.12-slim';    Cpu = 12.6; Mem = 8.8;  MemUsage = '176.4 MiB / 2 GiB';  Net = '2.1 MB / 3.8 MB';   Block = '6.0 MB / 1.1 MB'; PIDs = 7;  Ago = 4 }
+    )
+    $stopped = @(
+        @{ Name = 'hello-penguin'; Image = 'helloworld:latest';  Ago = 2 },
+        @{ Name = 'migration-job'; Image = 'postgres:16';        Ago = 9 },
+        @{ Name = 'old-build';     Image = 'node:20-alpine';     Ago = 30 }
+    )
+
+    $ci = 0
+    $containers = @()
+    $containers += foreach ($r in $running) {
+        $id = ('{0:x12}' -f (0x100000000000 + $ci * 0x1a2b3c)); $ci++
+        [pscustomobject]@{
+            Name     = $r.Name
+            IdShort  = $id.Substring(0, 12)
+            Image    = $r.Image
+            Status   = 'running'
+            CPU      = (& $jit $r.Cpu 2.0)
+            Mem      = (& $jit $r.Mem 1.5)
+            MemUsage = $r.MemUsage
+            NetIO    = $r.Net
+            BlockIO  = $r.Block
+            PIDs     = [string]$r.PIDs
+            Created  = $now.AddHours(-1 * $r.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            FullId   = "$id$id`demo"
+        }
+    }
+    $containers += foreach ($r in $stopped) {
+        $id = ('{0:x12}' -f (0x200000000000 + $ci * 0x1a2b3c)); $ci++
+        [pscustomobject]@{
+            Name     = $r.Name
+            IdShort  = $id.Substring(0, 12)
+            Image    = $r.Image
+            Status   = 'exited'
+            CPU      = ''
+            Mem      = ''
+            MemUsage = ''
+            NetIO    = ''
+            BlockIO  = ''
+            PIDs     = ''
+            Created  = $now.AddDays(-1 * $r.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            FullId   = "$id$id`demo"
+        }
+    }
+
+    $imageDefs = @(
+        @{ Repo = 'nginx';        Tag = '1.27';    Id = 'a1b2c3d4e5f6'; Size = '187.4 MB'; Ago = 6 },
+        @{ Repo = 'postgres';     Tag = '16';      Id = 'b2c3d4e5f6a7'; Size = '431.2 MB'; Ago = 8 },
+        @{ Repo = 'redis';        Tag = '7';       Id = 'c3d4e5f6a7b8'; Size = '117.8 MB'; Ago = 12 },
+        @{ Repo = 'helloworld';   Tag = 'latest';  Id = 'd4e5f6a7b8c9'; Size = '9.1 kB';   Ago = 2 }
+    )
+    $images = foreach ($im in $imageDefs) {
+        [pscustomobject]@{
+            Repository = $im.Repo
+            Tag        = $im.Tag
+            IdShort    = $im.Id
+            Size       = $im.Size
+            Created    = $now.AddDays(-1 * $im.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            FullId     = "sha256:$($im.Id)demofulliddemofulliddemofulliddemofull"
+        }
+    }
+
+    $volumes = @(
+        [pscustomobject]@{ Name = 'pgdata';      Driver = 'local' },
+        [pscustomobject]@{ Name = 'redis-data';  Driver = 'local' },
+        [pscustomobject]@{ Name = 'app-config';  Driver = 'local' },
+        [pscustomobject]@{ Name = 'build-cache'; Driver = 'local' }
+    )
+
+    return [pscustomobject]@{
+        Containers = @($containers)
+        Images     = @($images)
+        Volumes    = @($volumes)
+    }
+}
 '@
 
 # Make the shared helpers available on the UI thread too.
@@ -144,7 +249,7 @@ Invoke-Expression $CommonFunctions
 function Start-WslcRookeryUi {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
-    $script:wslc = Resolve-WslcPath
+    $script:wslc = if ($script:DemoMode) { 'wslc' } else { Resolve-WslcPath }
 
     # Shared state written by the background poller, read by the UI timer.
     $script:sync = [hashtable]::Synchronized(@{
@@ -161,14 +266,14 @@ function Start-WslcRookeryUi {
 
     # Background polling runspace: fetches snapshots off the UI thread.
     $worker = {
-        param($sync, $wslc, $commonFns)
+        param($sync, $wslc, $commonFns, $demo)
         Invoke-Expression $commonFns
         $last = [datetime]::MinValue
         while (-not $sync.Stop) {
             $due = ((Get-Date) - $last).TotalSeconds -ge $sync.IntervalSec
             if ($sync.ForceRefresh -or $due) {
                 try {
-                    $snap = Get-WslcSnapshot -Wslc $wslc
+                    $snap = if ($demo) { Get-DemoSnapshot } else { Get-WslcSnapshot -Wslc $wslc }
                     $sync.Containers = $snap.Containers
                     $sync.Images     = $snap.Images
                     $sync.Volumes    = $snap.Volumes
@@ -191,7 +296,7 @@ function Start-WslcRookeryUi {
     $script:bgRunspace.Open()
     $script:bgPs = [powershell]::Create()
     $script:bgPs.Runspace = $script:bgRunspace
-    $null = $script:bgPs.AddScript($worker).AddArgument($script:sync).AddArgument($script:wslc).AddArgument($CommonFunctions)
+    $null = $script:bgPs.AddScript($worker).AddArgument($script:sync).AddArgument($script:wslc).AddArgument($CommonFunctions).AddArgument($script:DemoMode)
     $script:bgHandle = $script:bgPs.BeginInvoke()
 
     # ---- XAML UI ----
@@ -329,6 +434,9 @@ function Start-WslcRookeryUi {
 
     $script:RunWslc = {
         param([string[]]$argList)
+        if ($script:DemoMode) {
+            return [pscustomobject]@{ Ok = $true; Text = "Demo mode: '$($argList -join ' ')' not executed."; Code = 0 }
+        }
         $out = & $script:wslc @argList 2>&1
         [pscustomobject]@{ Ok = ($LASTEXITCODE -eq 0); Text = ($out | Out-String); Code = $LASTEXITCODE }
     }
@@ -540,6 +648,7 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA') {
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
     $ps.Runspace.SessionStateProxy.SetVariable('AppDir', $PSScriptRoot)
+    $ps.Runspace.SessionStateProxy.SetVariable('DemoMode', $script:DemoMode)
     $null = $ps.AddScript((Get-Content -Raw -LiteralPath $PSCommandPath))
     $ps.Invoke() | Out-Null
     foreach ($e in $ps.Streams.Error) { Write-Error $e }
