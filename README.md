@@ -4,11 +4,11 @@
   <img src="WSLC Rookery Logo.png" alt="WSLC Rookery logo" width="200">
 </p>
 
-An informal, **local-only** GUI for managing [WSL containers](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-(`wslc.exe`) — the piece missing from Docker Desktop for `wslc`. A *rookery* is a
-penguin colony; this one lets you watch over your whole flock of containers at a glance.
+A desktop GUI tool for managing [WSL containers](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
+(`wslc.exe`) on a local machine — a big piece missing for `wslc` compared other desktop container runtimes. A *rookery* is a
+penguin colony; this one lets you watch over your whole flock of WSL containers at a glance.
 
-> **Version 0.1** — early and not fully tested. Expect rough edges.
+> **Version 0.1** — early and still testing. Expect rough edges.
 
 It's a single PowerShell 7 + WPF window that polls `wslc.exe` and shows your
 images, containers (with live stats), and volumes, with buttons for the common
