@@ -16,12 +16,14 @@ pwsh -File .\WslcRookery.ps1
 
 - Requires **PowerShell 7** (`pwsh`) and `wslc.exe` on PATH or at
   `%ProgramFiles%\WSL\wslc.exe` (resolved by `Resolve-WslcPath`).
-- Double-click testing goes through `Start-WslcRookery.cmd` →
-  `Start-WslcRookery.vbs` (uses `wscript` `SW_HIDE` so no console host window
-  lingers; `pwsh -WindowStyle Hidden` still allocates one).
-- The app needs a live `wslc` environment to show real data; there is no mock
-  layer. Validate changes by running the window and watching the status bar,
-  which surfaces object counts, last-refresh time, and any `wslc` error text.
+- Double-click testing goes through `Start-WslcRookery.cmd`, which runs `pwsh …
+  -Hidden`; the script then hides its own console window (`ShowWindow` `SW_HIDE`)
+  so no empty pwsh console lingers. `-Hidden` must NOT be passed when running from
+  an existing terminal (it would hide that terminal too).
+- The app needs a live `wslc` environment to show real data (unless run with
+  `-Demo`, which fills the grids with synthetic data and makes no `wslc` calls);
+  there is no mock layer. Validate changes by running the window and watching the
+  status bar, which surfaces object counts, last-refresh time, and `wslc` errors.
 
 ## Architecture (three cooperating threads)
 
