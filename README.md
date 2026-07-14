@@ -89,7 +89,7 @@ bar shows object counts, last refresh time, and any `wslc` error.
 |------|---------|
 | `WslcRookery.ps1` | The whole app (data layer + WPF UI + STA bootstrap). |
 | `Start-WslcRookery.cmd` | Double-click launcher; runs `pwsh` hidden (`-Hidden`, so the script hides its own console via `SW_HIDE`). |
-| `docs/WslcRookery.ico` | Window / taskbar icon. |
+| `WslcRookery.ico` | Window / taskbar icon (used by the app at runtime). |
 | `docs/WSLC Rookery Logo.png` | Logo shown in the README and the About dialog. |
 
 ## Limitations

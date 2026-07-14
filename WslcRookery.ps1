@@ -271,6 +271,17 @@ Invoke-Expression $CommonFunctions
 function Start-WslcRookeryUi {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
+    # Give this process an explicit taskbar identity so the taskbar button uses
+    # our window icon instead of the generic host (pwsh) icon it would otherwise
+    # inherit. Must run before the window is shown.
+    try {
+        Add-Type -Namespace WslcRookery -Name Shell -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("shell32.dll", PreserveSig = false)]
+public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string AppID);
+'@
+        [WslcRookery.Shell]::SetCurrentProcessExplicitAppUserModelID('WslcRookery.App')
+    } catch { }
+
     $script:wslc = if ($script:DemoMode) { 'wslc' } else { Resolve-WslcPath }
 
     # Shared state written by the background poller, read by the UI timer.
@@ -329,8 +340,15 @@ function Start-WslcRookeryUi {
         WindowStartupLocation="CenterScreen">
   <DockPanel>
     <DockPanel DockPanel.Dock="Top" Margin="8,8,8,4">
-      <TextBlock Text="WSLC Rookery" FontSize="16" FontWeight="Bold"
-                 VerticalAlignment="Center"/>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock Text="WSLC Rookery" FontSize="16" FontWeight="Bold"
+                   VerticalAlignment="Center"/>
+        <Border x:Name="DemoBadge" Visibility="Collapsed" Background="#D97706"
+                CornerRadius="3" Padding="7,1" Margin="12,0,0,0" VerticalAlignment="Center">
+          <TextBlock Text="DEMO - placeholder data" FontSize="12" FontWeight="Bold"
+                     Foreground="White"/>
+        </Border>
+      </StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
         <CheckBox x:Name="AutoRefreshCheck" Content="Auto-refresh (3s)" IsChecked="True"
                   VerticalAlignment="Center" Margin="0,0,12,0"/>
@@ -424,7 +442,7 @@ function Start-WslcRookeryUi {
     $script:window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 
     # Window icon (top-left title-bar + taskbar). Loaded from the app folder.
-    $iconPath = Join-Path $script:AppDir 'docs\WslcRookery.ico'
+    $iconPath = Join-Path $script:AppDir 'WslcRookery.ico'
     if (Test-Path -LiteralPath $iconPath) {
         try {
             $script:window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create([Uri]::new($iconPath))
@@ -433,12 +451,15 @@ function Start-WslcRookeryUi {
 
     # Element refs
     $script:ui = @{}
-    foreach ($n in     'AutoRefreshCheck','RefreshBtn','AboutBtn','StatusText',
+    foreach ($n in     'AutoRefreshCheck','RefreshBtn','AboutBtn','StatusText','DemoBadge',
                    'ContainersGrid','CStartBtn','CStopBtn','CKillBtn','CRemoveBtn','CLogsBtn','CInspectBtn','CPruneBtn',
                    'ImagesGrid','IRemoveBtn','IInspectBtn','IPruneBtn',
                    'VolumesGrid','VRemoveBtn','VInspectBtn','VPruneBtn') {
         $script:ui[$n] = $script:window.FindName($n)
     }
+
+    # Surface demo mode in the top bar so placeholder data isn't mistaken for real.
+    if ($script:DemoMode) { $script:ui.DemoBadge.Visibility = [System.Windows.Visibility]::Visible }
 
     # ---- UI-thread helpers (script scope so event handlers can see them) ----
     $script:LastVersion = -1
