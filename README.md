@@ -14,6 +14,21 @@ It's a single PowerShell 7 + WPF window that polls `wslc.exe` and shows your
 images, containers (with live stats), and volumes, with buttons for the common
 management actions.
 
+## Screenshots
+
+> Populated with placeholder data via demo mode (`-Demo`); no real containers shown.
+
+**Containers** — live grid with per-container stats:
+
+![Containers tab](docs/screenshot-containers.png)
+
+**Images** and **Volumes**:
+
+![Images tab](docs/screenshot-images.png)
+
+![Volumes tab](docs/screenshot-volumes.png)
+
+
 ## Requirements
 
 - Windows with the **WSL container** feature installed (`wslc.exe` on PATH, or at
@@ -31,6 +46,13 @@ pwsh -File .\WslcRookery.ps1
 
 > WPF needs an STA thread and pwsh 7 has no `-STA` switch, so the script hosts
 > its window on a dedicated STA runspace automatically. No extra flags needed.
+
+Add **`-Demo`** to fill the grids with synthetic placeholder data (no real
+`wslc` calls) — handy for screenshots and docs:
+
+```powershell
+pwsh -File .\WslcRookery.ps1 -Demo
+```
 
 ## Features
 
