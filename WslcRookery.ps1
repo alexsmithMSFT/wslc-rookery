@@ -21,41 +21,16 @@
     Nothing real is touched - handy for screenshots and docs. Real wslc calls are
     skipped entirely in this mode.
 
-.PARAMETER NoConsole
-    Detach this process from its console on startup. The double-click launcher
-    (Start-WslcRookery.cmd) passes this so the briefly-created terminal can close
-    while the WPF process continues running. Do NOT pass this when running from
-    an existing terminal because it would detach that PowerShell session.
-
 .EXAMPLE
     pwsh -File .\WslcRookery.ps1 -Demo
 
 .NOTES
     Local-only informal tool. Licensed under the MIT License.
 #>
-param([switch]$Demo, [switch]$NoConsole)
+param([switch]$Demo)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-# Detach from our console ASAP so the terminal host can exit instead of lingering
-# behind the WPF UI. FreeConsole works with both legacy conhost and Windows
-# Terminal/ConPTY; ShowWindow(GetConsoleWindow()) does not reliably hide the
-# latter. Only the double-click launcher passes -NoConsole.
-if ($NoConsole) {
-    if (-not ('WslcRookery.NativeConsole' -as [type])) {
-        Add-Type -Namespace WslcRookery -Name NativeConsole -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-public static extern bool FreeConsole();
-'@
-    }
-    if (-not [WslcRookery.NativeConsole]::FreeConsole()) {
-        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        if ($errorCode -ne 6) { # ERROR_INVALID_HANDLE means there was no console to detach.
-            throw [System.ComponentModel.Win32Exception]::new($errorCode, 'Failed to detach the console.')
-        }
-    }
-}
 
 # Demo mode. The STA bootstrap re-hosts this script's raw text on a fresh runspace
 # (see bottom), where a bound -Demo param would reset to $false; so honor an

@@ -88,7 +88,7 @@ bar shows object counts, last refresh time, and any `wslc` error.
 | File | Purpose |
 |------|---------|
 | `WslcRookery.ps1` | The whole app (data layer + WPF UI + STA bootstrap). |
-| `Start-WslcRookery.cmd` | Double-click launcher; starts `pwsh` briefly, then the script detaches from its console so only the WPF window remains. |
+| `Start-WslcRookery.cmd` | Double-click launcher; runs `pwsh` through headless `conhost` so only the WPF window is visible. |
 | `WslcRookery.ico` | Window / taskbar icon (used by the app at runtime). |
 | `docs/WSLC Rookery Logo.png` | Logo shown in the README and the About dialog. |
 
