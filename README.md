@@ -5,7 +5,7 @@
 </p>
 
 A desktop GUI tool for managing [WSL containers](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-(`wslc.exe`) on a local machine — a big piece missing for `wslc` compared other desktop container runtimes. A *rookery* is a
+(`wslc.exe`) on a local machine — a big piece missing for `wslc` compared to other desktop container runtimes. A *rookery* is a
 penguin colony; this one lets you watch over your whole flock of WSL containers at a glance.
 
 > **Version 0.1** — early and still testing. Expect rough edges.
@@ -32,8 +32,15 @@ management actions.
 ## Requirements
 
 - Windows with the **WSL container** feature installed (`wslc.exe` on PATH, or at
-  `%ProgramFiles%\WSL\wslc.exe`). See the
-  [WSL container docs](https://learn.microsoft.com/en-us/windows/wsl/wsl-container).
+  `%ProgramFiles%\WSL\wslc.exe`). WSL containers are currently available only as a
+  **public preview** in the WSL pre-release build. Install/update it with:
+
+  ```powershell
+  wsl.exe --update --pre-release
+  ```
+
+  See the [WSL pre-release builds](https://github.com/microsoft/WSL/releases) and
+  the [Get started with WSL containers tutorial](https://learn.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers).
 - **PowerShell 7** (`pwsh`).
 
 ## Run it

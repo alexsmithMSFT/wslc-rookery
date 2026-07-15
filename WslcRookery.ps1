@@ -1,7 +1,9 @@
 <#
 .SYNOPSIS
-    WSLC Rookery - an informal, local-only Docker-Desktop-style GUI for the
-    WSL container feature (wslc.exe). Watch over your whole container rookery.
+    WSLC Rookery - an informal, local-only desktop GUI for managing WSL
+    containers (wslc.exe) - a big piece missing for `wslc` compared to other
+    desktop container runtimes. A rookery is a penguin colony; this one lets you
+    watch over your whole flock of WSL containers at a glance.
 
 .DESCRIPTION
     A single-window WPF app (PowerShell 7) that polls `wslc.exe ... --format json`
