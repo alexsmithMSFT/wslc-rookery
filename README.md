@@ -5,10 +5,7 @@
 </p>
 
 A desktop GUI tool for managing [WSL containers](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-(`wslc.exe`) on a local machine — a big piece missing for `wslc` compared to other desktop container runtimes. A *rookery* is a
-penguin colony; this one lets you watch over your whole flock of WSL containers at a glance.
-
-> **Version 0.1** — early and still testing. Expect rough edges.
+(`wslc.exe`) on a local machine — a big piece missing for `wslc` compared to other desktop container runtimes. A *rookery* is a penguin colony; this one lets you watch over your whole flock of WSL containers at a glance.
 
 It's a single PowerShell 7 + WPF window that polls `wslc.exe` and shows your
 images, containers (with live stats), and volumes, with buttons for the common
@@ -63,24 +60,25 @@ pwsh -File .\WslcRookery.ps1 -Demo
 
 ## Features
 
-**Containers tab** — live grid (auto-refresh every 3s) joining `wslc container
-list --all` with `wslc stats`:
+* **Containers** tab — live grid (auto-refresh every 3s) joining `wslc container
+list --all` 
+    * With `wslc stats`:
 Name · Status · Image · CPU% · Mem% · Mem usage · Net I/O · Block I/O · PIDs ·
-Container ID · Created. Actions: **Start · Stop · Kill · Remove · Logs · Inspect
-· Prune stopped**.
+Container ID · Created
+    * Actions: Start · Stop · Kill · Remove · Logs · Inspect · Prune stopped
 
-**Images tab** — Repository · Tag · Image ID · Size · Created.
-Actions: **Remove (rmi) · Inspect · Prune unused**.
+* **Images** tab — Repository · Tag · Image ID · Size · Created
+    * Actions: Remove (rmi) · Inspect · Prune unused
 
-**Volumes tab** — Name · Driver.
-Actions: **Remove · Inspect · Prune unused**.
+* **Volumes** tab — Name · Driver.
+    * Actions: Remove · Inspect · Prune unused
 
-Toolbar: **Refresh now** button and an **Auto-refresh (3s)** toggle. The status
-bar shows object counts, last refresh time, and any `wslc` error.
+* Toolbar: 
+    * Refresh now button and an Auto-refresh (3s) toggle. 
 
-- Destructive actions (kill/remove/prune) ask for confirmation.
-- **Logs** and **Inspect** open a scrollable text popup.
-- The selected row is preserved across auto-refreshes.
+* Status bar shows object counts, last refresh time, and any `wslc` error.
+* Destructive actions (kill/remove/prune) ask for confirmation.
+* **Logs** and **Inspect** open a scrollable text popup.
 
 ## How it works
 
