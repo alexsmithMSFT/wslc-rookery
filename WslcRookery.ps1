@@ -21,12 +21,11 @@
     Nothing real is touched - handy for screenshots and docs. Real wslc calls are
     skipped entirely in this mode.
 
-.PARAMETER Hidden
-    Hide this process's own console window on startup (SW_HIDE). The double-click
-    launcher (Start-WslcRookery.cmd) passes this so no empty pwsh console lingers
-    while the WPF window is open. A brief flash may still occur as the console is
-    created and then immediately hidden. Do NOT pass this when running from an
-    existing terminal - it would hide that terminal too.
+.PARAMETER NoConsole
+    Detach this process from its console on startup. The double-click launcher
+    (Start-WslcRookery.cmd) passes this so the briefly-created terminal can close
+    while the WPF process continues running. Do NOT pass this when running from
+    an existing terminal because it would detach that PowerShell session.
 
 .EXAMPLE
     pwsh -File .\WslcRookery.ps1 -Demo
@@ -34,24 +33,28 @@
 .NOTES
     Local-only informal tool. Licensed under the MIT License.
 #>
-param([switch]$Demo, [switch]$Hidden)
+param([switch]$Demo, [switch]$NoConsole)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Hide our own console ASAP so no empty pwsh window lingers behind the WPF UI.
-# Only when -Hidden is passed (by the launcher) so an interactive `pwsh -File ...`
-# from a terminal never hides the user's console. The STA re-host below runs this
-# same text with -Hidden unbound (false), so it only fires once, in this process.
-if ($Hidden) {
-    try {
-        Add-Type -Namespace WslcRookery -Name NativeWin -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+# Detach from our console ASAP so the terminal host can exit instead of lingering
+# behind the WPF UI. FreeConsole works with both legacy conhost and Windows
+# Terminal/ConPTY; ShowWindow(GetConsoleWindow()) does not reliably hide the
+# latter. Only the double-click launcher passes -NoConsole.
+if ($NoConsole) {
+    if (-not ('WslcRookery.NativeConsole' -as [type])) {
+        Add-Type -Namespace WslcRookery -Name NativeConsole -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool FreeConsole();
 '@
-        $consoleHwnd = [WslcRookery.NativeWin]::GetConsoleWindow()
-        if ($consoleHwnd -ne [IntPtr]::Zero) { [WslcRookery.NativeWin]::ShowWindow($consoleHwnd, 0) | Out-Null } # 0 = SW_HIDE
-    } catch { }
+    }
+    if (-not [WslcRookery.NativeConsole]::FreeConsole()) {
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($errorCode -ne 6) { # ERROR_INVALID_HANDLE means there was no console to detach.
+            throw [System.ComponentModel.Win32Exception]::new($errorCode, 'Failed to detach the console.')
+        }
+    }
 }
 
 # Demo mode. The STA bootstrap re-hosts this script's raw text on a fresh runspace

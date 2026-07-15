@@ -1,6 +1,6 @@
 @echo off
 REM Double-click launcher for WSLC Rookery (PowerShell 7 / pwsh).
-REM Starts the GUI hidden. -WindowStyle Hidden asks pwsh to hide its window, and
-REM the script itself hides its console (SW_HIDE) via -Hidden, so no empty pwsh
-REM console lingers while the app runs. A brief flash on startup is possible.
-start "" pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0WslcRookery.ps1" -Hidden
+REM /B avoids creating a second console. The script immediately calls FreeConsole
+REM via -NoConsole, allowing this briefly-created launcher window to close while
+REM the WPF application continues running.
+start "" /B pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0WslcRookery.ps1" -NoConsole

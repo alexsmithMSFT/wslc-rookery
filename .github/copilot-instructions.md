@@ -16,10 +16,11 @@ pwsh -File .\WslcRookery.ps1
 
 - Requires **PowerShell 7** (`pwsh`) and `wslc.exe` on PATH or at
   `%ProgramFiles%\WSL\wslc.exe` (resolved by `Resolve-WslcPath`).
-- Double-click testing goes through `Start-WslcRookery.cmd`, which runs `pwsh …
-  -Hidden`; the script then hides its own console window (`ShowWindow` `SW_HIDE`)
-  so no empty pwsh console lingers. `-Hidden` must NOT be passed when running from
-  an existing terminal (it would hide that terminal too).
+- Double-click testing goes through `Start-WslcRookery.cmd`, which starts `pwsh`
+  with `-NoConsole`; the script immediately calls Win32 `FreeConsole()` so the
+  brief launcher terminal can close while the WPF process continues.
+  `-NoConsole` must NOT be passed from an existing terminal because it would
+  detach that PowerShell session.
 - The app needs a live `wslc` environment to show real data (unless run with
   `-Demo`, which fills the grids with synthetic data and makes no `wslc` calls);
   there is no mock layer. Validate changes by running the window and watching the
