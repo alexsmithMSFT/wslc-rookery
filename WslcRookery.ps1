@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    WSLC Rookery - an informal, local-only desktop GUI for managing WSL
+    WSLC Rookery - a lightweight, local-only desktop GUI for managing WSL
     containers (wslc.exe) - a big piece missing for `wslc` compared to other
     desktop container runtimes. A rookery is a penguin colony; this one lets you
     watch over your whole flock of WSL containers at a glance.
