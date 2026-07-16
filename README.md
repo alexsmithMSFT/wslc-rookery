@@ -13,8 +13,6 @@ management actions.
 
 ## Screenshots
 
-> Populated with placeholder data via demo mode (`-Demo`); no real containers shown.
-
 **Containers** — live grid with per-container stats:
 
 ![Containers tab](docs/screenshot-containers.png)
