@@ -61,9 +61,10 @@ pwsh -File .\WslcRookery.ps1 -Demo
 * **Containers** tab — live grid (auto-refresh every 3s) joining `wslc container
 list --all` 
     * With `wslc stats`:
-Name · Status · Image · CPU% · Mem% · Mem usage · Net I/O · Block I/O · PIDs ·
-Container ID · Created
-    * Actions: Start · Stop · Kill · Remove · Logs · Inspect · Prune stopped
+Name · Status · Interactive · Image · CPU% · Mem% · Mem usage · Net I/O ·
+Block I/O · PIDs · Container ID · Created
+    * Actions: Start · Stop · Kill · Remove · Connect · Logs · Inspect ·
+      Prune stopped
 
 * **Images** tab — Repository · Tag · Image ID · Size · Created
     * Actions: Remove (rmi) · Inspect · Prune unused
@@ -77,14 +78,29 @@ Container ID · Created
 * Status bar shows object counts, last refresh time, and any `wslc` error.
 * Destructive actions (kill/remove/prune) ask for confirmation.
 * **Logs** and **Inspect** open a scrollable text popup.
+* **Connect** opens the selected container in a new terminal window on the host,
+  starting it first if it is stopped.
 
 ## How it works
 
-- All data comes from `wslc <cmd> --format json`, parsed with `ConvertFrom-Json`.
+- All data comes from `wslc <cmd> --format json`. That output is **NDJSON** (one
+  JSON object per line, not an array), so each line is parsed on its own.
 - A background runspace does the polling so the UI never blocks; a
   `DispatcherTimer` copies the latest snapshot into the grids.
-- Container status is derived from the JSON `State` field
-  (`1=created`, `2=running`, `3=exited`); use **Inspect** for authoritative detail.
+- Container status is `wslc`'s own `State` string (`running`, `exited`, ...);
+  use **Inspect** for authoritative detail.
+- Clicking a column header sorts the grid, and the sort, the selected row and the
+  scroll position are all preserved across refreshes.
+- The **Interactive** column is read from the container's
+  `com.microsoft.wsl.container.metadata` label: a non-zero `InitProcessFlags`
+  means the container was created with an interactive init process, which is what
+  `wslc start -ai` needs. It is only a hint — see below.
+- **Connect** launches a detached terminal (Windows Terminal when available,
+  otherwise a plain `pwsh` console) running a small wrapper script. Because the
+  terminal is detached, the wrapper — not the app — decides what to run: it tries
+  `wslc start -ai <id>` and, if that fails with `ERROR_NOT_SUPPORTED`, falls back
+  to `wslc exec -i -t <id> <shell>` (preferring `bash`, else `sh`). So Connect
+  works even when the Interactive hint is wrong.
 
 ## Files
 
@@ -97,8 +113,9 @@ Container ID · Created
 
 ## Limitations
 
-- Read + basic lifecycle management only. No build/run/create/exec/pull/push,
-  networks, or registries (use the `wslc` CLI for those).
+- Read + basic lifecycle management only, plus **Connect**. No build/run/create/
+  pull/push, networks, or registries (use the `wslc` CLI for those). `exec` is
+  used only to open a shell when `start -ai` is not supported.
 - `wslc` is an evolving tool; flags/output may change. If a column shows
   blank or an action fails, check the status bar / the popup error text.
 

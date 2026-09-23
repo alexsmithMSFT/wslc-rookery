@@ -47,7 +47,7 @@ if (-not (Test-Path variable:AppDir) -or [string]::IsNullOrEmpty($AppDir)) {
     $AppDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 }
 $script:AppDir = $AppDir
-$script:AppVersion = '0.3'
+$script:AppVersion = '0.4'
 
 # --- Shared helpers (injected into both the UI thread and the background poller)
 $CommonFunctions = @'
@@ -125,6 +125,39 @@ function Get-IdKey {
     if ($s.StartsWith('sha256:')) { $s = $s.Substring(7) }
     if ($s.Length -gt 12) { return $s.Substring(0, 12) }
     return $s
+}
+
+# Only containers whose init process was created interactive can be attached to
+# with `wslc start -ai`; the rest fail with ERROR_NOT_SUPPORTED and need an
+# `wslc exec -i -t` shell instead. wslc exposes no Tty/OpenStdin field, but the
+# Labels string carries
+#   com.microsoft.wsl.container.metadata={"V1":{...,"InitProcessFlags":3,...}}
+# and InitProcessFlags is non-zero exactly for the attachable ones (verified
+# against wslc 2.9.12.0). This is only a hint - the connect path still falls
+# back at runtime - so any parse failure degrades to "not interactive".
+function Get-ContainerInteractive {
+    param($Labels)
+    $s = "$Labels"
+    $marker = 'com.microsoft.wsl.container.metadata='
+    $i = $s.IndexOf($marker)
+    if ($i -lt 0) { return $false }
+    $rest = $s.Substring($i + $marker.Length)
+    # The value is JSON and contains commas, so the label list cannot simply be
+    # split on ',' - walk braces to find where this value ends.
+    $depth = 0; $end = -1
+    for ($k = 0; $k -lt $rest.Length; $k++) {
+        if ($rest[$k] -eq '{') { $depth++ }
+        elseif ($rest[$k] -eq '}') { $depth--; if ($depth -eq 0) { $end = $k; break } }
+    }
+    if ($end -lt 0) { return $false }
+    try {
+        $meta = $rest.Substring(0, $end + 1) | ConvertFrom-Json
+        $v1 = $meta.PSObject.Properties['V1']
+        if (-not $v1 -or $null -eq $v1.Value) { return $false }
+        $flags = $v1.Value.PSObject.Properties['InitProcessFlags']
+        if (-not $flags -or $null -eq $flags.Value) { return $false }
+        return ([int]$flags.Value -ne 0)
+    } catch { return $false }
 }
 
 # --- Sort keys -------------------------------------------------------------
@@ -209,11 +242,14 @@ function Get-WslcSnapshot {
         $netIO    = if ($st) { Get-JsonProp -Object $st -Names @('NetIO') } else { '' }
         $blockIO  = if ($st) { Get-JsonProp -Object $st -Names @('BlockIO') } else { '' }
         $pids     = if ($st) { [string](Get-JsonProp -Object $st -Names @('PIDs')) } else { '' }
+        $interactive = Get-ContainerInteractive (Get-JsonProp -Object $c -Names @('Labels'))
         [pscustomobject]@{
             Name     = Get-JsonProp -Object $c -Names @('Names','Name')
             IdShort  = Get-IdKey $id
             Image    = Get-JsonProp -Object $c -Names @('Image')
             Status   = Get-ContainerStatusText -State (Get-JsonProp -Object $c -Names @('State') -Default $null)
+            Interactive     = $interactive
+            InteractiveText = if ($interactive) { 'yes' } else { '' }
             CPU      = $cpu
             Mem      = $mem
             MemUsage = $memUsage
@@ -273,16 +309,16 @@ function Get-DemoSnapshot {
     $rel = { param($n, $unit) if ($n -eq 1) { "1 $unit ago" } else { "$n ${unit}s ago" } }
 
     $running = @(
-        @{ Name = 'web-frontend'; Image = 'nginx:1.27';         Cpu = 4.2;  Mem = 6.1;  MemUsage = '124.5 MiB / 2 GiB';  Net = '3.4 MB / 1.2 MB';   Block = '8.1 MB / 0 B';   PIDs = 9;  Ago = 3 },
-        @{ Name = 'api-gateway';  Image = 'traefik:v3';          Cpu = 7.8;  Mem = 9.4;  MemUsage = '188.2 MiB / 2 GiB';  Net = '12.7 MB / 9.1 MB';  Block = '2.3 MB / 512 kB'; PIDs = 14; Ago = 5 },
-        @{ Name = 'cache';        Image = 'redis:7';             Cpu = 1.5;  Mem = 3.2;  MemUsage = '64.8 MiB / 2 GiB';   Net = '820 kB / 640 kB';   Block = '0 B / 0 B';      PIDs = 5;  Ago = 6 },
-        @{ Name = 'db';           Image = 'postgres:16';         Cpu = 3.1;  Mem = 15.7; MemUsage = '321.0 MiB / 2 GiB';  Net = '5.6 MB / 4.2 MB';   Block = '44.9 MB / 12 MB';PIDs = 21; Ago = 8 },
-        @{ Name = 'worker';       Image = 'python:3.12-slim';    Cpu = 12.6; Mem = 8.8;  MemUsage = '176.4 MiB / 2 GiB';  Net = '2.1 MB / 3.8 MB';   Block = '6.0 MB / 1.1 MB'; PIDs = 7;  Ago = 4 }
+        @{ Name = 'web-frontend'; Image = 'nginx:1.27';         Cpu = 4.2;  Mem = 6.1;  MemUsage = '124.5 MiB / 2 GiB';  Net = '3.4 MB / 1.2 MB';   Block = '8.1 MB / 0 B';   PIDs = 9;  Ago = 3;  Tty = $false },
+        @{ Name = 'api-gateway';  Image = 'traefik:v3';          Cpu = 7.8;  Mem = 9.4;  MemUsage = '188.2 MiB / 2 GiB';  Net = '12.7 MB / 9.1 MB';  Block = '2.3 MB / 512 kB'; PIDs = 14; Ago = 5;  Tty = $false },
+        @{ Name = 'cache';        Image = 'redis:7';             Cpu = 1.5;  Mem = 3.2;  MemUsage = '64.8 MiB / 2 GiB';   Net = '820 kB / 640 kB';   Block = '0 B / 0 B';      PIDs = 5;  Ago = 6;  Tty = $true },
+        @{ Name = 'db';           Image = 'postgres:16';         Cpu = 3.1;  Mem = 15.7; MemUsage = '321.0 MiB / 2 GiB';  Net = '5.6 MB / 4.2 MB';   Block = '44.9 MB / 12 MB';PIDs = 21; Ago = 8;  Tty = $true },
+        @{ Name = 'worker';       Image = 'python:3.12-slim';    Cpu = 12.6; Mem = 8.8;  MemUsage = '176.4 MiB / 2 GiB';  Net = '2.1 MB / 3.8 MB';   Block = '6.0 MB / 1.1 MB'; PIDs = 7;  Ago = 4;  Tty = $false }
     )
     $stopped = @(
-        @{ Name = 'hello-penguin'; Image = 'helloworld:latest';  Ago = 2 },
-        @{ Name = 'migration-job'; Image = 'postgres:16';        Ago = 9 },
-        @{ Name = 'old-build';     Image = 'node:20-alpine';     Ago = 30 }
+        @{ Name = 'hello-penguin'; Image = 'helloworld:latest';  Ago = 2;  Tty = $true },
+        @{ Name = 'migration-job'; Image = 'postgres:16';        Ago = 9;  Tty = $false },
+        @{ Name = 'old-build';     Image = 'node:20-alpine';     Ago = 30; Tty = $true }
     )
 
     $ci = 0
@@ -297,6 +333,8 @@ function Get-DemoSnapshot {
             IdShort  = $id.Substring(0, 12)
             Image    = $r.Image
             Status   = 'running'
+            Interactive     = $r.Tty
+            InteractiveText = if ($r.Tty) { 'yes' } else { '' }
             CPU      = $cpu
             Mem      = $mem
             MemUsage = $r.MemUsage
@@ -321,6 +359,8 @@ function Get-DemoSnapshot {
             IdShort  = $id.Substring(0, 12)
             Image    = $r.Image
             Status   = 'exited'
+            Interactive     = $r.Tty
+            InteractiveText = if ($r.Tty) { 'yes' } else { '' }
             CPU      = ''
             Mem      = ''
             MemUsage = ''
@@ -479,6 +519,8 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
             <Button x:Name="CStopBtn"    Content="Stop"    Padding="8,3" Margin="0,0,6,0"/>
             <Button x:Name="CKillBtn"    Content="Kill"    Padding="8,3" Margin="0,0,6,0"/>
             <Button x:Name="CRemoveBtn"  Content="Remove"  Padding="8,3" Margin="0,0,6,0"/>
+            <Separator Width="1" Margin="4,0"/>
+            <Button x:Name="CConnectBtn" Content="Connect" Padding="8,3" Margin="6,0,6,0"/>
             <Button x:Name="CLogsBtn"    Content="Logs"    Padding="8,3" Margin="0,0,6,0"/>
             <Button x:Name="CInspectBtn" Content="Inspect" Padding="8,3" Margin="0,0,6,0"/>
             <Separator Width="1" Margin="4,0"/>
@@ -489,6 +531,7 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
             <DataGrid.Columns>
               <DataGridTextColumn Header="Name"      Binding="{Binding Name}"     Width="180"/>
               <DataGridTextColumn Header="Status"    Binding="{Binding Status}"   Width="80"/>
+              <DataGridTextColumn Header="Interactive" Binding="{Binding InteractiveText}" Width="75"/>
               <DataGridTextColumn Header="Image"     Binding="{Binding Image}"    Width="150"/>
               <DataGridTextColumn Header="CPU"       Binding="{Binding CPU}"      Width="70"  SortMemberPath="CpuSort"/>
               <DataGridTextColumn Header="Mem%"      Binding="{Binding Mem}"      Width="70"  SortMemberPath="MemSort"/>
@@ -561,7 +604,7 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
     # Element refs
     $script:ui = @{}
     foreach ($n in     'AutoRefreshCheck','RefreshBtn','AboutBtn','StatusText','DemoBadge',
-                   'ContainersGrid','CStartBtn','CStopBtn','CKillBtn','CRemoveBtn','CLogsBtn','CInspectBtn','CPruneBtn',
+                   'ContainersGrid','CStartBtn','CStopBtn','CKillBtn','CRemoveBtn','CConnectBtn','CLogsBtn','CInspectBtn','CPruneBtn',
                    'ImagesGrid','IRemoveBtn','IInspectBtn','IPruneBtn',
                    'VolumesGrid','VRemoveBtn','VInspectBtn','VPruneBtn') {
         $script:ui[$n] = $script:window.FindName($n)
@@ -718,6 +761,86 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
         $script:sync.ForceRefresh = $true
     }
 
+    # Opens the selected container in a terminal window on the host.
+    #
+    # This deliberately does NOT go through $script:DoAction / $script:RunWslc:
+    # those capture output and wait for the process, which would hang the UI
+    # thread for the whole length of an interactive session. The terminal is
+    # launched detached instead.
+    #
+    # Because it is detached, the app cannot see `start -ai` fail afterwards, and
+    # wslc has no dry-run to pre-flight it. So the decision is made *inside* the
+    # spawned window by a small wrapper: try `start -ai` (which also starts a
+    # stopped container), and on ERROR_NOT_SUPPORTED fall back to an exec shell.
+    # The Interactive column is only a hint; this is what makes it safe.
+    $script:ConnectContainer = {
+        param($c)
+        if ($script:DemoMode) {
+            [System.Windows.MessageBox]::Show($script:window,
+                "Demo mode: no terminal launched.`n`nAgainst a real wslc this would run:`n  wslc start -ai $($c.Name)`nfalling back to:`n  wslc exec -i -t $($c.Name) <shell>",
+                'WSLC Rookery', [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Information) | Out-Null
+            return
+        }
+
+        # The wrapper is written to a temp script and launched with -File rather
+        # than being passed inline: wt.exe re-parses the command line it is given,
+        # which mangles a long -EncodedCommand argument and kills the pane before
+        # anything runs. A file path survives that second parse intact. Values are
+        # embedded as single-quoted PowerShell literals (doubling any quote).
+        $q = { param($s) "'" + ("$s" -replace "'", "''") + "'" }
+        $wrapper = @"
+`$ErrorActionPreference = 'Continue'
+Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
+`$wslc = $(& $q $script:wslc)
+`$id   = $(& $q $c.FullId)
+`$name = $(& $q $c.Name)
+`$Host.UI.RawUI.WindowTitle = "WSLC Rookery - `$name"
+Write-Host "Connecting to `$name ..." -ForegroundColor Cyan
+& `$wslc start -ai `$id
+if (`$LASTEXITCODE -ne 0) {
+    Write-Host ''
+    Write-Host "'start -ai' is not supported for this container; falling back to an exec shell." -ForegroundColor Yellow
+    & `$wslc start `$id | Out-Null
+    `$shell = (& `$wslc exec `$id /bin/sh -c 'command -v bash || command -v sh' 2>`$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace(`$shell)) { `$shell = '/bin/sh' }
+    Write-Host "Running: wslc exec -i -t `$name `$shell" -ForegroundColor Cyan
+    & `$wslc exec -i -t `$id `$shell
+}
+if (`$LASTEXITCODE -ne 0) {
+    Write-Host ''
+    Write-Host "Could not connect to `$name (exit `$LASTEXITCODE)." -ForegroundColor Red
+    Write-Host 'This window is left open so the error above stays readable.'
+}
+"@
+        $wrapperPath = Join-Path $env:TEMP ("WslcRookery-connect-{0}.ps1" -f ([guid]::NewGuid().ToString('N')))
+        Set-Content -LiteralPath $wrapperPath -Value $wrapper -Encoding UTF8
+
+        # `-w -1` forces a brand new Windows Terminal window; without it the tab
+        # is attached to whatever terminal window the user was last using.
+        # wt.exe re-parses its own command line and strips the quoting that
+        # Start-Process would add per argument, so the arguments are passed as a
+        # single pre-quoted string. For the same reason the tab title is set from
+        # inside the wrapper instead of with `--title`: a container name with a
+        # space in it would otherwise be split into a stray command.
+        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+        try {
+            if ($wt) {
+                Start-Process -FilePath $wt.Path `
+                    -ArgumentList ('-w -1 new-tab pwsh -NoProfile -NoExit -File "{0}"' -f $wrapperPath)
+            } else {
+                Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NoExit', '-File', $wrapperPath)
+            }
+            $script:ui.StatusText.Text = "Connecting to $($c.Name)..."
+        } catch {
+            Remove-Item -LiteralPath $wrapperPath -Force -ErrorAction SilentlyContinue
+            & $script:Warn "Could not launch a terminal:`n`n$($_.Exception.Message)"
+            return
+        }
+        # The container may have been started by the connect, so repaint.
+        $script:sync.ForceRefresh = $true
+    }
+
     # ---- Container actions ----
     $script:RequireContainer = {
         if (-not $script:ui.ContainersGrid.SelectedItem) { & $script:Warn 'Select a container first.'; return $null }
@@ -738,6 +861,9 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
         if (& $script:Confirm "Remove container '$($c.Name)'? (uses --force)") {
             & $script:DoAction @('container','remove','--force', $c.FullId) "Removing $($c.Name)..."
         }
+    })
+    $script:ui.CConnectBtn.Add_Click({
+        $c = & $script:RequireContainer; if ($c) { & $script:ConnectContainer $c }
     })
     $script:ui.CLogsBtn.Add_Click({
         $c = & $script:RequireContainer; if (-not $c) { return }
