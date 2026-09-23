@@ -47,7 +47,7 @@ if (-not (Test-Path variable:AppDir) -or [string]::IsNullOrEmpty($AppDir)) {
     $AppDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 }
 $script:AppDir = $AppDir
-$script:AppVersion = '0.2'
+$script:AppVersion = '0.3'
 
 # --- Shared helpers (injected into both the UI thread and the background poller)
 $CommonFunctions = @'
@@ -59,6 +59,11 @@ function Resolve-WslcPath {
     throw "wslc.exe not found (checked PATH and '$fallback'). Install the WSL container feature."
 }
 
+# `wslc ... --format json` emits NDJSON: one standalone JSON object per line, not
+# a JSON array. Feeding the whole blob to ConvertFrom-Json fails on line 2 with
+# "Additional text encountered after finished reading JSON content", so parse
+# line by line and only fall back to a whole-text parse (a real array) if that
+# yields nothing.
 function Invoke-WslcJson {
     param([string]$Wslc, [string[]]$ArgList)
     $out = & $Wslc @ArgList --format json 2>&1
@@ -67,82 +72,109 @@ function Invoke-WslcJson {
         throw "wslc $($ArgList -join ' ') exited $LASTEXITCODE`n$text"
     }
     if ([string]::IsNullOrWhiteSpace($text)) { return @() }
-    $data = $text | ConvertFrom-Json
-    if ($null -eq $data) { return @() }
-    return @($data)
-}
 
-function Format-Bytes {
-    param($Bytes)
-    if ($null -eq $Bytes) { return '' }
-    $units = 'B','KB','MB','GB','TB','PB'
-    $v = [double]$Bytes; $i = 0
-    while ($v -ge 1024 -and $i -lt $units.Count - 1) { $v /= 1024; $i++ }
-    return ('{0:0.##} {1}' -f $v, $units[$i])
-}
-
-function ConvertFrom-Epoch {
-    param($Epoch)
-    if ($null -eq $Epoch -or [long]$Epoch -le 0) { return '' }
-    return [DateTimeOffset]::FromUnixTimeSeconds([long]$Epoch).LocalDateTime.ToString('yyyy-MM-dd HH:mm:ss')
-}
-
-function Get-ContainerStatusText {
-    param([int]$State)
-    switch ($State) {
-        1 { 'created' }
-        2 { 'running' }
-        3 { 'exited' }
-        default { "state-$State" }
+    $rows = @()
+    foreach ($line in ($text -split "`r?`n")) {
+        $t = $line.Trim()
+        if (-not $t) { continue }
+        try { $rows += ($t | ConvertFrom-Json) }
+        catch { throw "wslc $($ArgList -join ' ') returned unparsable JSON: $($_.Exception.Message)`n$t" }
     }
+    if ($rows.Count -eq 0) {
+        $data = $text | ConvertFrom-Json
+        if ($null -eq $data) { return @() }
+        return @($data)
+    }
+    return @($rows)
+}
+
+# Strict mode makes a missing property a terminating error, and wslc's field set
+# varies by subcommand and version - so every JSON read goes through this.
+function Get-JsonProp {
+    param($Object, [string[]]$Names, $Default = '')
+    if ($null -eq $Object) { return $Default }
+    foreach ($n in $Names) {
+        $p = $Object.PSObject.Properties[$n]
+        if ($p -and $null -ne $p.Value -and "$($p.Value)" -ne '') { return $p.Value }
+    }
+    return $Default
+}
+
+# wslc reports State as a string ('running', 'exited', ...). Older builds used an
+# int, so keep mapping those rather than surfacing a bare number.
+function Get-ContainerStatusText {
+    param($State)
+    if ($null -eq $State) { return '' }
+    $s = "$State".Trim()
+    if ($s -match '^\d+$') {
+        switch ([int]$s) {
+            1 { return 'created' }
+            2 { return 'running' }
+            3 { return 'exited' }
+            default { return "state-$s" }
+        }
+    }
+    return $s.ToLowerInvariant()
+}
+
+# Container IDs are 64 chars with --no-trunc but 12 without, and `stats` always
+# returns the full ID - normalize to a 12-char prefix so the two can be joined.
+function Get-IdKey {
+    param($Id)
+    $s = "$Id"
+    if ($s.StartsWith('sha256:')) { $s = $s.Substring(7) }
+    if ($s.Length -gt 12) { return $s.Substring(0, 12) }
+    return $s
 }
 
 function Get-WslcSnapshot {
     param([string]$Wslc)
-    $containersRaw = Invoke-WslcJson -Wslc $Wslc -ArgList @('container','list','--all')
+    $containersRaw = Invoke-WslcJson -Wslc $Wslc -ArgList @('container','list','--all','--no-trunc')
     $statsRaw      = Invoke-WslcJson -Wslc $Wslc -ArgList @('stats','--all','--no-trunc')
     $imagesRaw     = Invoke-WslcJson -Wslc $Wslc -ArgList @('images','--no-trunc')
     $volumesRaw    = Invoke-WslcJson -Wslc $Wslc -ArgList @('volume','list')
 
     $statsById = @{}
-    foreach ($s in $statsRaw) { if ($s.ID) { $statsById[$s.ID] = $s } }
+    foreach ($s in $statsRaw) {
+        $sid = Get-JsonProp -Object $s -Names @('ID','Id')
+        if ($sid) { $statsById[(Get-IdKey $sid)] = $s }
+    }
 
     $containers = foreach ($c in $containersRaw) {
-        $st = $statsById[$c.Id]
+        $id = [string](Get-JsonProp -Object $c -Names @('ID','Id'))
+        $st = if ($id) { $statsById[(Get-IdKey $id)] } else { $null }
         [pscustomobject]@{
-            Name     = $c.Name
-            IdShort  = if ($c.Id) { $c.Id.Substring(0, [Math]::Min(12, $c.Id.Length)) } else { '' }
-            Image    = $c.Image
-            Status   = Get-ContainerStatusText -State ([int]$c.State)
-            CPU      = if ($st) { $st.CPUPerc } else { '' }
-            Mem      = if ($st) { $st.MemPerc } else { '' }
-            MemUsage = if ($st) { $st.MemUsage } else { '' }
-            NetIO    = if ($st) { $st.NetIO } else { '' }
-            BlockIO  = if ($st) { $st.BlockIO } else { '' }
-            PIDs     = if ($st) { $st.PIDs } else { '' }
-            Created  = ConvertFrom-Epoch -Epoch $c.CreatedAt
-            FullId   = $c.Id
+            Name     = Get-JsonProp -Object $c -Names @('Names','Name')
+            IdShort  = Get-IdKey $id
+            Image    = Get-JsonProp -Object $c -Names @('Image')
+            Status   = Get-ContainerStatusText -State (Get-JsonProp -Object $c -Names @('State') -Default $null)
+            CPU      = if ($st) { Get-JsonProp -Object $st -Names @('CPUPerc') } else { '' }
+            Mem      = if ($st) { Get-JsonProp -Object $st -Names @('MemPerc') } else { '' }
+            MemUsage = if ($st) { Get-JsonProp -Object $st -Names @('MemUsage') } else { '' }
+            NetIO    = if ($st) { Get-JsonProp -Object $st -Names @('NetIO') } else { '' }
+            BlockIO  = if ($st) { Get-JsonProp -Object $st -Names @('BlockIO') } else { '' }
+            PIDs     = if ($st) { [string](Get-JsonProp -Object $st -Names @('PIDs')) } else { '' }
+            Created  = Get-JsonProp -Object $c -Names @('RunningFor','CreatedSince','CreatedAt')
+            FullId   = $id
         }
     }
 
     $images = foreach ($im in $imagesRaw) {
-        $id = [string]$im.Id
-        $short = if ($id.StartsWith('sha256:')) { $id.Substring(7, [Math]::Min(12, $id.Length - 7)) }
-                 elseif ($id) { $id.Substring(0, [Math]::Min(12, $id.Length)) } else { '' }
+        $id = [string](Get-JsonProp -Object $im -Names @('ID','Id'))
         [pscustomobject]@{
-            Repository = if ($im.Repository) { $im.Repository } else { '<none>' }
-            Tag        = if ($im.Tag) { $im.Tag } else { '<none>' }
-            IdShort    = $short
-            Size       = Format-Bytes -Bytes $im.Size
-            Created    = ConvertFrom-Epoch -Epoch $im.Created
+            Repository = Get-JsonProp -Object $im -Names @('Repository') -Default '<none>'
+            Tag        = Get-JsonProp -Object $im -Names @('Tag') -Default '<none>'
+            IdShort    = Get-IdKey $id
+            Size       = Get-JsonProp -Object $im -Names @('Size')
+            Created    = Get-JsonProp -Object $im -Names @('CreatedSince','CreatedAt')
             FullId     = $id
         }
     }
 
     $volumes = foreach ($vol in $volumesRaw) {
         [pscustomobject]@{
-            Name   = $vol.Name
-            Driver = $vol.Driver
+            Name   = Get-JsonProp -Object $vol -Names @('Name')
+            Driver = Get-JsonProp -Object $vol -Names @('Driver')
         }
     }
 
@@ -160,7 +192,8 @@ function Get-DemoSnapshot {
     # auto-refreshes; stopped containers have blank metrics (as real ones do).
     $rand = [Random]::new()
     $jit = { param($base, $span) ('{0:0.00}%' -f [Math]::Max(0.0, $base + ($rand.NextDouble() - 0.5) * $span)) }
-    $now = Get-Date
+    # Real rows carry wslc's relative text ("2 weeks ago"), so demo rows do too.
+    $rel = { param($n, $unit) if ($n -eq 1) { "1 $unit ago" } else { "$n ${unit}s ago" } }
 
     $running = @(
         @{ Name = 'web-frontend'; Image = 'nginx:1.27';         Cpu = 4.2;  Mem = 6.1;  MemUsage = '124.5 MiB / 2 GiB';  Net = '3.4 MB / 1.2 MB';   Block = '8.1 MB / 0 B';   PIDs = 9;  Ago = 3 },
@@ -190,7 +223,7 @@ function Get-DemoSnapshot {
             NetIO    = $r.Net
             BlockIO  = $r.Block
             PIDs     = [string]$r.PIDs
-            Created  = $now.AddHours(-1 * $r.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            Created  = (& $rel $r.Ago 'hour')
             FullId   = "$id$id`demo"
         }
     }
@@ -207,7 +240,7 @@ function Get-DemoSnapshot {
             NetIO    = ''
             BlockIO  = ''
             PIDs     = ''
-            Created  = $now.AddDays(-1 * $r.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            Created  = (& $rel $r.Ago 'day')
             FullId   = "$id$id`demo"
         }
     }
@@ -224,7 +257,7 @@ function Get-DemoSnapshot {
             Tag        = $im.Tag
             IdShort    = $im.Id
             Size       = $im.Size
-            Created    = $now.AddDays(-1 * $im.Ago).ToString('yyyy-MM-dd HH:mm:ss')
+            Created    = (& $rel $im.Ago 'day')
             FullId     = "sha256:$($im.Id)demofulliddemofulliddemofulliddemofull"
         }
     }
