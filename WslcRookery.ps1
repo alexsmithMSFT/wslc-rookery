@@ -127,6 +127,66 @@ function Get-IdKey {
     return $s
 }
 
+# --- Sort keys -------------------------------------------------------------
+# Grid columns show wslc's preformatted strings, which sort lexically ("9.00%"
+# after "12.58%", "622MB" after "4GB"). These build hidden numeric/date keys the
+# columns point at via SortMemberPath, so the display text stays untouched.
+# All return a low sentinel instead of throwing - strict mode is on and wslc's
+# field values vary by subcommand and version.
+
+function ConvertTo-SortPercent {
+    param($Text)
+    $s = "$Text".Trim().TrimEnd('%')
+    $n = 0.0
+    if ([double]::TryParse($s, [ref]$n)) { return $n }
+    return -1.0
+}
+
+function ConvertTo-SortNumber {
+    param($Text)
+    $n = 0.0
+    if ([double]::TryParse("$Text".Trim(), [ref]$n)) { return $n }
+    return -1.0
+}
+
+# Handles SI (kB/MB/GB) and IEC (KiB/MiB/GiB) units. For "A / B" pairs - as used
+# by Mem Usage, Net I/O and Block I/O - sorts on the first value.
+function ConvertTo-SortBytes {
+    param($Text)
+    $s = "$Text".Trim()
+    if (-not $s) { return -1.0 }
+    if ($s.Contains('/')) { $s = $s.Split('/')[0].Trim() }
+    if ($s -notmatch '^\s*([0-9]*\.?[0-9]+)\s*([a-zA-Z]*)\s*$') { return -1.0 }
+    $value = [double]$Matches[1]
+    $unit = $Matches[2].ToLowerInvariant()
+    $mult = switch ($unit) {
+        ''    { 1 }
+        'b'   { 1 }
+        'k'   { 1000 }        'kb'  { 1000 }
+        'm'   { 1000000 }     'mb'  { 1000000 }
+        'g'   { 1000000000 }  'gb'  { 1000000000 }
+        't'   { 1000000000000 } 'tb' { 1000000000000 }
+        'kib' { 1024 }
+        'mib' { 1048576 }
+        'gib' { 1073741824 }
+        'tib' { 1099511627776 }
+        default { 1 }
+    }
+    return $value * $mult
+}
+
+# wslc emits CreatedAt like "2026-09-03 15:19:53 -0400 EDT". The trailing zone
+# abbreviation is not parseable, so drop it and keep the numeric offset.
+function ConvertTo-SortDate {
+    param($Text)
+    $s = "$Text".Trim()
+    if (-not $s) { return [DateTimeOffset]::MinValue }
+    $s = $s -replace '\s+[A-Za-z]{2,5}$', ''
+    $dto = [DateTimeOffset]::MinValue
+    if ([DateTimeOffset]::TryParse($s, [ref]$dto)) { return $dto }
+    return [DateTimeOffset]::MinValue
+}
+
 function Get-WslcSnapshot {
     param([string]$Wslc)
     $containersRaw = Invoke-WslcJson -Wslc $Wslc -ArgList @('container','list','--all','--no-trunc')
@@ -143,31 +203,48 @@ function Get-WslcSnapshot {
     $containers = foreach ($c in $containersRaw) {
         $id = [string](Get-JsonProp -Object $c -Names @('ID','Id'))
         $st = if ($id) { $statsById[(Get-IdKey $id)] } else { $null }
+        $cpu      = if ($st) { Get-JsonProp -Object $st -Names @('CPUPerc') } else { '' }
+        $mem      = if ($st) { Get-JsonProp -Object $st -Names @('MemPerc') } else { '' }
+        $memUsage = if ($st) { Get-JsonProp -Object $st -Names @('MemUsage') } else { '' }
+        $netIO    = if ($st) { Get-JsonProp -Object $st -Names @('NetIO') } else { '' }
+        $blockIO  = if ($st) { Get-JsonProp -Object $st -Names @('BlockIO') } else { '' }
+        $pids     = if ($st) { [string](Get-JsonProp -Object $st -Names @('PIDs')) } else { '' }
         [pscustomobject]@{
             Name     = Get-JsonProp -Object $c -Names @('Names','Name')
             IdShort  = Get-IdKey $id
             Image    = Get-JsonProp -Object $c -Names @('Image')
             Status   = Get-ContainerStatusText -State (Get-JsonProp -Object $c -Names @('State') -Default $null)
-            CPU      = if ($st) { Get-JsonProp -Object $st -Names @('CPUPerc') } else { '' }
-            Mem      = if ($st) { Get-JsonProp -Object $st -Names @('MemPerc') } else { '' }
-            MemUsage = if ($st) { Get-JsonProp -Object $st -Names @('MemUsage') } else { '' }
-            NetIO    = if ($st) { Get-JsonProp -Object $st -Names @('NetIO') } else { '' }
-            BlockIO  = if ($st) { Get-JsonProp -Object $st -Names @('BlockIO') } else { '' }
-            PIDs     = if ($st) { [string](Get-JsonProp -Object $st -Names @('PIDs')) } else { '' }
+            CPU      = $cpu
+            Mem      = $mem
+            MemUsage = $memUsage
+            NetIO    = $netIO
+            BlockIO  = $blockIO
+            PIDs     = $pids
             Created  = Get-JsonProp -Object $c -Names @('RunningFor','CreatedSince','CreatedAt')
             FullId   = $id
+            # Hidden sort keys (SortMemberPath targets); never rendered as columns.
+            CpuSort      = ConvertTo-SortPercent $cpu
+            MemSort      = ConvertTo-SortPercent $mem
+            MemUsageSort = ConvertTo-SortBytes $memUsage
+            NetIOSort    = ConvertTo-SortBytes $netIO
+            BlockIOSort  = ConvertTo-SortBytes $blockIO
+            PIDsSort     = ConvertTo-SortNumber $pids
+            CreatedSort  = ConvertTo-SortDate (Get-JsonProp -Object $c -Names @('CreatedAt'))
         }
     }
 
     $images = foreach ($im in $imagesRaw) {
         $id = [string](Get-JsonProp -Object $im -Names @('ID','Id'))
+        $size = Get-JsonProp -Object $im -Names @('Size')
         [pscustomobject]@{
             Repository = Get-JsonProp -Object $im -Names @('Repository') -Default '<none>'
             Tag        = Get-JsonProp -Object $im -Names @('Tag') -Default '<none>'
             IdShort    = Get-IdKey $id
-            Size       = Get-JsonProp -Object $im -Names @('Size')
+            Size       = $size
             Created    = Get-JsonProp -Object $im -Names @('CreatedSince','CreatedAt')
             FullId     = $id
+            SizeSort    = ConvertTo-SortBytes $size
+            CreatedSort = ConvertTo-SortDate (Get-JsonProp -Object $im -Names @('CreatedAt'))
         }
     }
 
@@ -209,22 +286,32 @@ function Get-DemoSnapshot {
     )
 
     $ci = 0
+    $now = [DateTimeOffset]::Now
     $containers = @()
     $containers += foreach ($r in $running) {
         $id = ('{0:x12}' -f (0x100000000000 + $ci * 0x1a2b3c)); $ci++
+        $cpu = (& $jit $r.Cpu 2.0)
+        $mem = (& $jit $r.Mem 1.5)
         [pscustomobject]@{
             Name     = $r.Name
             IdShort  = $id.Substring(0, 12)
             Image    = $r.Image
             Status   = 'running'
-            CPU      = (& $jit $r.Cpu 2.0)
-            Mem      = (& $jit $r.Mem 1.5)
+            CPU      = $cpu
+            Mem      = $mem
             MemUsage = $r.MemUsage
             NetIO    = $r.Net
             BlockIO  = $r.Block
             PIDs     = [string]$r.PIDs
             Created  = (& $rel $r.Ago 'hour')
             FullId   = "$id$id`demo"
+            CpuSort      = ConvertTo-SortPercent $cpu
+            MemSort      = ConvertTo-SortPercent $mem
+            MemUsageSort = ConvertTo-SortBytes $r.MemUsage
+            NetIOSort    = ConvertTo-SortBytes $r.Net
+            BlockIOSort  = ConvertTo-SortBytes $r.Block
+            PIDsSort     = ConvertTo-SortNumber $r.PIDs
+            CreatedSort  = $now.AddHours(-1 * $r.Ago)
         }
     }
     $containers += foreach ($r in $stopped) {
@@ -242,6 +329,13 @@ function Get-DemoSnapshot {
             PIDs     = ''
             Created  = (& $rel $r.Ago 'day')
             FullId   = "$id$id`demo"
+            CpuSort      = -1.0
+            MemSort      = -1.0
+            MemUsageSort = -1.0
+            NetIOSort    = -1.0
+            BlockIOSort  = -1.0
+            PIDsSort     = -1.0
+            CreatedSort  = $now.AddDays(-1 * $r.Ago)
         }
     }
 
@@ -259,6 +353,8 @@ function Get-DemoSnapshot {
             Size       = $im.Size
             Created    = (& $rel $im.Ago 'day')
             FullId     = "sha256:$($im.Id)demofulliddemofulliddemofulliddemofull"
+            SizeSort    = ConvertTo-SortBytes $im.Size
+            CreatedSort = $now.AddDays(-1 * $im.Ago)
         }
     }
 
@@ -394,14 +490,14 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
               <DataGridTextColumn Header="Name"      Binding="{Binding Name}"     Width="180"/>
               <DataGridTextColumn Header="Status"    Binding="{Binding Status}"   Width="80"/>
               <DataGridTextColumn Header="Image"     Binding="{Binding Image}"    Width="150"/>
-              <DataGridTextColumn Header="CPU"       Binding="{Binding CPU}"      Width="70"/>
-              <DataGridTextColumn Header="Mem%"      Binding="{Binding Mem}"      Width="70"/>
-              <DataGridTextColumn Header="Mem Usage" Binding="{Binding MemUsage}" Width="140"/>
-              <DataGridTextColumn Header="Net I/O"   Binding="{Binding NetIO}"    Width="120"/>
-              <DataGridTextColumn Header="Block I/O" Binding="{Binding BlockIO}"  Width="120"/>
-              <DataGridTextColumn Header="PIDs"      Binding="{Binding PIDs}"     Width="55"/>
+              <DataGridTextColumn Header="CPU"       Binding="{Binding CPU}"      Width="70"  SortMemberPath="CpuSort"/>
+              <DataGridTextColumn Header="Mem%"      Binding="{Binding Mem}"      Width="70"  SortMemberPath="MemSort"/>
+              <DataGridTextColumn Header="Mem Usage" Binding="{Binding MemUsage}" Width="140" SortMemberPath="MemUsageSort"/>
+              <DataGridTextColumn Header="Net I/O"   Binding="{Binding NetIO}"    Width="120" SortMemberPath="NetIOSort"/>
+              <DataGridTextColumn Header="Block I/O" Binding="{Binding BlockIO}"  Width="120" SortMemberPath="BlockIOSort"/>
+              <DataGridTextColumn Header="PIDs"      Binding="{Binding PIDs}"     Width="55"  SortMemberPath="PIDsSort"/>
               <DataGridTextColumn Header="Container ID" Binding="{Binding IdShort}" Width="110"/>
-              <DataGridTextColumn Header="Created"   Binding="{Binding Created}"  Width="150"/>
+              <DataGridTextColumn Header="Created"   Binding="{Binding Created}"  Width="150" SortMemberPath="CreatedSort"/>
             </DataGrid.Columns>
           </DataGrid>
         </DockPanel>
@@ -422,8 +518,8 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
               <DataGridTextColumn Header="Repository" Binding="{Binding Repository}" Width="260"/>
               <DataGridTextColumn Header="Tag"        Binding="{Binding Tag}"        Width="120"/>
               <DataGridTextColumn Header="Image ID"   Binding="{Binding IdShort}"    Width="130"/>
-              <DataGridTextColumn Header="Size"       Binding="{Binding Size}"       Width="110"/>
-              <DataGridTextColumn Header="Created"    Binding="{Binding Created}"    Width="160"/>
+              <DataGridTextColumn Header="Size"       Binding="{Binding Size}"       Width="110" SortMemberPath="SizeSort"/>
+              <DataGridTextColumn Header="Created"    Binding="{Binding Created}"    Width="160" SortMemberPath="CreatedSort"/>
             </DataGrid.Columns>
           </DataGrid>
         </DockPanel>
@@ -477,15 +573,56 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
     # ---- UI-thread helpers (script scope so event handlers can see them) ----
     $script:LastVersion = -1
 
+    # Assigning ItemsSource builds a brand-new CollectionView, which drops the
+    # user's sort (Items.SortDescriptions plus the column header arrows) and the
+    # scroll position. Capture all three before the swap and put them back after.
+    $script:FindScrollViewer = {
+        param($dep)
+        if ($null -eq $dep) { return $null }
+        if ($dep -is [System.Windows.Controls.ScrollViewer]) { return $dep }
+        $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($dep)
+        for ($i = 0; $i -lt $count; $i++) {
+            $found = & $script:FindScrollViewer ([System.Windows.Media.VisualTreeHelper]::GetChild($dep, $i))
+            if ($found) { return $found }
+        }
+        return $null
+    }
+
     $script:UpdateGrid = {
         param($grid, $items, $keyProp)
         $prevKey = if ($grid.SelectedItem) { $grid.SelectedItem.$keyProp } else { $null }
+
+        # SortDescriptions is live on the outgoing view, so copy it out by value.
+        $sorts = @()
+        foreach ($sd in $grid.Items.SortDescriptions) {
+            $sorts += New-Object System.ComponentModel.SortDescription($sd.PropertyName, $sd.Direction)
+        }
+        $dirs = @{}
+        foreach ($col in $grid.Columns) {
+            if ($null -ne $col.SortDirection) { $dirs[$col.DisplayIndex] = $col.SortDirection }
+        }
+        $sv = & $script:FindScrollViewer $grid
+        $offset = if ($sv) { $sv.VerticalOffset } else { $null }
+
         $grid.ItemsSource = $items
+
+        if ($sorts.Count -gt 0) {
+            $grid.Items.SortDescriptions.Clear()
+            foreach ($sd in $sorts) { $grid.Items.SortDescriptions.Add($sd) }
+            foreach ($col in $grid.Columns) {
+                if ($dirs.ContainsKey($col.DisplayIndex)) { $col.SortDirection = $dirs[$col.DisplayIndex] }
+            }
+            $grid.Items.Refresh()
+        }
+
         if ($prevKey) {
             foreach ($it in $items) {
-                if ($it.$keyProp -eq $prevKey) { $grid.SelectedItem = $it; $grid.ScrollIntoView($it); break }
+                if ($it.$keyProp -eq $prevKey) { $grid.SelectedItem = $it; break }
             }
         }
+
+        # Last, so it wins over any scrolling the selection restore triggered.
+        if ($sv -and $null -ne $offset) { $sv.ScrollToVerticalOffset($offset) }
     }
 
     $script:RunWslc = {
