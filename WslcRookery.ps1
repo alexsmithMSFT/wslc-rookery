@@ -47,7 +47,7 @@ if (-not (Test-Path variable:AppDir) -or [string]::IsNullOrEmpty($AppDir)) {
     $AppDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 }
 $script:AppDir = $AppDir
-$script:AppVersion = '0.4'
+$script:AppVersion = '0.3'
 
 # --- Shared helpers (injected into both the UI thread and the background poller)
 $CommonFunctions = @'

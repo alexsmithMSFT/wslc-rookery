@@ -94,4 +94,4 @@ Read + basic lifecycle management only (start/stop/kill/remove, rmi, volume
 remove, prune, logs, inspect), plus **Connect**, which opens a container in a
 host terminal. No build/run/create/pull/push, networks, or registries — those
 stay in the `wslc` CLI. `exec` is used only as the Connect fallback shell, not
-as a general capability. Version is `0.4`, tracked in `$script:AppVersion`.
+as a general capability. Version is `0.3`, tracked in `$script:AppVersion`.
