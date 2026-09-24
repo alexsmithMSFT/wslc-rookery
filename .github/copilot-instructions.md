@@ -3,7 +3,7 @@
 WSLC Rookery is a single-file, local-only WPF GUI (PowerShell 7) for the WSL
 container feature (`wslc.exe`) — a Docker-Desktop-style window that polls `wslc`
 and shows Containers (with live stats), Images, and Volumes with lifecycle action
-buttons. The entire application lives in `WslcRookery.ps1` (~490 lines). Everything
+buttons. The entire application lives in `WslcRookery.ps1` (~975 lines). Everything
 else is launchers, icons, and docs.
 
 ## Run and test
@@ -39,8 +39,9 @@ pwsh -File .\WslcRookery.ps1
    latest snapshot into the DataGrids and updates the status bar. This is the
    only code that reads `$sync` on the UI thread.
 
-Data flow: `wslc <cmd> --format json` → `Invoke-WslcJson`/`ConvertFrom-Json` →
-`Get-WslcSnapshot` shapes `[pscustomobject]` rows → `$sync` → DataGrids.
+Data flow: `wslc <cmd> --format json` (**NDJSON** — one object per line, not an
+array, so `Invoke-WslcJson` parses line by line) → `Get-WslcSnapshot` shapes
+`[pscustomobject]` rows → `$sync` → DataGrids.
 
 ## Key conventions
 
@@ -59,11 +60,28 @@ Data flow: `wslc <cmd> --format json` → `Invoke-WslcJson`/`ConvertFrom-Json` �
   via `$script:RunWslc`, shows a warning popup on failure, then sets
   `$sync.ForceRefresh = $true` so the poller repaints. Destructive actions
   (kill/remove/prune) must first pass `$script:Confirm`.
-- **Container status** comes from the JSON `State` int mapped by
-  `Get-ContainerStatusText` (`1=created`, `2=running`, `3=exited`).
-- **Selection is preserved across refreshes** by `$script:UpdateGrid`, which
-  re-selects the row whose key (`FullId` for containers/images, `Name` for
-  volumes) matches the prior selection. New grids need a stable key prop.
+- **Connect does not use `$script:DoAction`.** `$script:RunWslc` captures output
+  and waits, which would hang the UI thread for a whole interactive session.
+  `$script:ConnectContainer` writes a small wrapper `.ps1` to `$env:TEMP` and
+  launches it detached (`wt.exe -w -1 new-tab`, else plain `pwsh`); the wrapper
+  self-deletes, tries `wslc start -ai`, and falls back to `wslc exec -i -t` on
+  `ERROR_NOT_SUPPORTED`. Note `wt.exe` re-parses its own command line and strips
+  per-argument quoting, so its arguments are passed as one pre-quoted string and
+  the tab title is set from inside the wrapper, not with `--title`.
+- **Container status** is `wslc`'s own `State` string, normalised by
+  `Get-ContainerStatusText`.
+- **Interactive detection** (`Get-ContainerInteractive`) brace-counts the JSON
+  value out of the `com.microsoft.wsl.container.metadata` label and treats a
+  non-zero `V1.InitProcessFlags` as interactive. The label value is JSON
+  containing commas, so the label list cannot be split on `,`. Any parse failure
+  degrades to "not interactive"; it is only a hint, never a gate.
+- **Selection, sort and scroll are preserved across refreshes** by
+  `$script:UpdateGrid`. Assigning `ItemsSource` builds a new CollectionView, so
+  `Items.SortDescriptions` and each column's `SortDirection` must be captured
+  before the swap and restored after; scroll offset is restored last, after
+  selection. Grids need a stable key prop (`FullId` for containers/images,
+  `Name` for volumes). Columns that display formatted text but must sort
+  numerically use `SortMemberPath` pointing at a hidden numeric property.
 - `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'` are set;
   keep new code strict-mode-safe (guard property access, e.g. the `if ($st)`
   stat lookups).
@@ -73,6 +91,7 @@ Data flow: `wslc <cmd> --format json` → `Invoke-WslcJson`/`ConvertFrom-Json` �
 ## Scope boundaries
 
 Read + basic lifecycle management only (start/stop/kill/remove, rmi, volume
-remove, prune, logs, inspect). No build/run/create/exec/pull/push, networks, or
-registries — those stay in the `wslc` CLI. Version is `0.1`, tracked in
-`$script:AppVersion`.
+remove, prune, logs, inspect), plus **Connect**, which opens a container in a
+host terminal. No build/run/create/pull/push, networks, or registries — those
+stay in the `wslc` CLI. `exec` is used only as the Connect fallback shell, not
+as a general capability. Version is `0.4`, tracked in `$script:AppVersion`.
