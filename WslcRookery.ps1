@@ -128,13 +128,12 @@ function Get-IdKey {
 }
 
 # Only containers whose init process was created interactive can be attached to
-# with `wslc start -ai`; the rest fail with ERROR_NOT_SUPPORTED and need an
+# with `wslc start -ai`; the rest fail with ERROR_INVALID_STATE and need an
 # `wslc exec -i -t` shell instead. wslc exposes no Tty/OpenStdin field, but the
 # Labels string carries
 #   com.microsoft.wsl.container.metadata={"V1":{...,"InitProcessFlags":3,...}}
 # and InitProcessFlags is non-zero exactly for the attachable ones (verified
-# against wslc 2.9.12.0). This is only a hint - the connect path still falls
-# back at runtime - so any parse failure degrades to "not interactive".
+# against wslc 2.9.12.0). Any parse failure degrades to "not interactive".
 function Get-ContainerInteractive {
     param($Labels)
     $s = "$Labels"
@@ -769,14 +768,15 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
     # launched detached instead.
     #
     # Because it is detached, the app cannot see commands fail afterwards. The
-    # spawned wrapper uses the Interactive hint to avoid an attach attempt that
-    # can leave some non-interactive containers stuck, while still falling back
-    # to an exec shell if `start -ai` fails for a container marked interactive.
+    # spawned wrapper uses the Interactive flag to choose attach or exec before
+    # connecting. It must not fall back after an interactive session exits:
+    # `start -ai` returns the container process exit code, which may be non-zero
+    # after a valid attached session.
     $script:ConnectContainer = {
         param($c)
         if ($script:DemoMode) {
             [System.Windows.MessageBox]::Show($script:window,
-                "Demo mode: no terminal launched.`n`nAgainst a real wslc this would run:`n  wslc start -ai $($c.Name)`nfalling back to:`n  wslc exec -i -t $($c.Name) <shell>",
+                "Demo mode: no terminal launched.`n`nInteractive containers use:`n  wslc start -ai $($c.Name)`n`nNon-interactive containers use:`n  wslc exec -i -t $($c.Name) <shell>",
                 'WSLC Rookery', [System.Windows.MessageBoxButton]::OK,
                 [System.Windows.MessageBoxImage]::Information) | Out-Null
             return
@@ -798,28 +798,27 @@ Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
 `$interactive = $interactiveLiteral
 `$Host.UI.RawUI.WindowTitle = "WSLC Rookery - `$name"
 Write-Host "Connecting to `$name ..." -ForegroundColor Cyan
-`$useExec = -not `$interactive
 if (`$interactive) {
     & `$wslc start -ai `$id
-    `$useExec = (`$LASTEXITCODE -ne 0)
-}
-if (`$useExec) {
-    Write-Host ''
-    if (`$interactive) {
-        Write-Host "'start -ai' failed; falling back to an exec shell." -ForegroundColor Yellow
-    } else {
-        Write-Host "Container is not interactive; opening an exec shell." -ForegroundColor Yellow
+    `$sessionExit = `$LASTEXITCODE
+    if (`$sessionExit -ne 0) {
+        Write-Host ''
+        Write-Host "Interactive container session ended with exit `$sessionExit." -ForegroundColor Red
+        Write-Host 'No fallback shell was opened.'
     }
+} else {
+    Write-Host ''
+    Write-Host "Container is not interactive; opening an exec shell." -ForegroundColor Yellow
     & `$wslc start `$id | Out-Null
     `$shell = (& `$wslc exec `$id /bin/sh -c 'command -v bash || command -v sh' 2>`$null | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace(`$shell)) { `$shell = '/bin/sh' }
     Write-Host "Running: wslc exec -i -t `$name `$shell" -ForegroundColor Cyan
     & `$wslc exec -i -t `$id `$shell
-}
-if (`$LASTEXITCODE -ne 0) {
-    Write-Host ''
-    Write-Host "Could not connect to `$name (exit `$LASTEXITCODE)." -ForegroundColor Red
-    Write-Host 'This window is left open so the error above stays readable.'
+    if (`$LASTEXITCODE -ne 0) {
+        Write-Host ''
+        Write-Host "Could not connect to `$name (exit `$LASTEXITCODE)." -ForegroundColor Red
+        Write-Host 'This window is left open so the error above stays readable.'
+    }
 }
 "@
         $wrapperPath = Join-Path $env:TEMP ("WslcRookery-connect-{0}.ps1" -f ([guid]::NewGuid().ToString('N')))

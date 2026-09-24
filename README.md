@@ -94,12 +94,13 @@ Block I/O · PIDs · Container ID · Created
 - The **Interactive** column is read from the container's
   `com.microsoft.wsl.container.metadata` label: a non-zero `InitProcessFlags`
   means the container was created with an interactive init process, which is what
-  `wslc start -ai` needs. It is only a hint — see below.
+  `wslc start -ai` needs.
 - **Connect** launches a detached terminal (Windows Terminal when available,
   otherwise a plain `pwsh` console) running a small wrapper script. Containers
   marked interactive use `wslc start -ai <id>`. Non-interactive containers skip
-  attach and use `wslc exec -i -t <id> <shell>` (preferring `bash`, else `sh`);
-  interactive containers also fall back to exec if attach fails.
+  attach and use `wslc exec -i -t <id> <shell>` (preferring `bash`, else `sh`).
+  When an interactive session ends, Connect reports its exit code and does not
+  open a fallback shell.
 
 ## Files
 
