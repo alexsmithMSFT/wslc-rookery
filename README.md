@@ -96,11 +96,10 @@ Block I/O · PIDs · Container ID · Created
   means the container was created with an interactive init process, which is what
   `wslc start -ai` needs. It is only a hint — see below.
 - **Connect** launches a detached terminal (Windows Terminal when available,
-  otherwise a plain `pwsh` console) running a small wrapper script. Because the
-  terminal is detached, the wrapper — not the app — decides what to run: it tries
-  `wslc start -ai <id>` and, if that fails with `ERROR_NOT_SUPPORTED`, falls back
-  to `wslc exec -i -t <id> <shell>` (preferring `bash`, else `sh`). So Connect
-  works even when the Interactive hint is wrong.
+  otherwise a plain `pwsh` console) running a small wrapper script. Containers
+  marked interactive use `wslc start -ai <id>`. Non-interactive containers skip
+  attach and use `wslc exec -i -t <id> <shell>` (preferring `bash`, else `sh`);
+  interactive containers also fall back to exec if attach fails.
 
 ## Files
 

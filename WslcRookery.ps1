@@ -768,11 +768,10 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
     # thread for the whole length of an interactive session. The terminal is
     # launched detached instead.
     #
-    # Because it is detached, the app cannot see `start -ai` fail afterwards, and
-    # wslc has no dry-run to pre-flight it. So the decision is made *inside* the
-    # spawned window by a small wrapper: try `start -ai` (which also starts a
-    # stopped container), and on ERROR_NOT_SUPPORTED fall back to an exec shell.
-    # The Interactive column is only a hint; this is what makes it safe.
+    # Because it is detached, the app cannot see commands fail afterwards. The
+    # spawned wrapper uses the Interactive hint to avoid an attach attempt that
+    # can leave some non-interactive containers stuck, while still falling back
+    # to an exec shell if `start -ai` fails for a container marked interactive.
     $script:ConnectContainer = {
         param($c)
         if ($script:DemoMode) {
@@ -789,18 +788,28 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
         # anything runs. A file path survives that second parse intact. Values are
         # embedded as single-quoted PowerShell literals (doubling any quote).
         $q = { param($s) "'" + ("$s" -replace "'", "''") + "'" }
+        $interactiveLiteral = if ($c.Interactive) { '$true' } else { '$false' }
         $wrapper = @"
 `$ErrorActionPreference = 'Continue'
 Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
 `$wslc = $(& $q $script:wslc)
 `$id   = $(& $q $c.FullId)
 `$name = $(& $q $c.Name)
+`$interactive = $interactiveLiteral
 `$Host.UI.RawUI.WindowTitle = "WSLC Rookery - `$name"
 Write-Host "Connecting to `$name ..." -ForegroundColor Cyan
-& `$wslc start -ai `$id
-if (`$LASTEXITCODE -ne 0) {
+`$useExec = -not `$interactive
+if (`$interactive) {
+    & `$wslc start -ai `$id
+    `$useExec = (`$LASTEXITCODE -ne 0)
+}
+if (`$useExec) {
     Write-Host ''
-    Write-Host "'start -ai' is not supported for this container; falling back to an exec shell." -ForegroundColor Yellow
+    if (`$interactive) {
+        Write-Host "'start -ai' failed; falling back to an exec shell." -ForegroundColor Yellow
+    } else {
+        Write-Host "Container is not interactive; opening an exec shell." -ForegroundColor Yellow
+    }
     & `$wslc start `$id | Out-Null
     `$shell = (& `$wslc exec `$id /bin/sh -c 'command -v bash || command -v sh' 2>`$null | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace(`$shell)) { `$shell = '/bin/sh' }
